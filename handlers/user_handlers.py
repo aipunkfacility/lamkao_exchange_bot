@@ -1,197 +1,89 @@
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
+from aiogram.filters import Command
 
-from config import RATES, ADMIN_ID, ADMIN_CARD, INPUT_CURRENCY, CURRENCY_NAMES
+from config import ADMIN_ID
 from keyboards.keyboards import (
     get_main_keyboard,
-    get_currency_keyboard,
-    get_confirm_keyboard,
-    get_admin_order_keyboard,
-    get_chat_keyboard,
-    get_admin_chat_keyboard,
+    get_service_action_keyboard,
+    get_chat_keyboard
 )
-from states.states import ExchangeStates, ChatStates
+from states.states import ChatStates, ServiceStates
 
 router = Router()
 
+# --- ОБРАБОТКА ОПЛАТЫ СЕРВИСА (ФИНАЛ СБОРА ЗАЯВКИ) ---
 
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "Добро пожаловать в LamKao Exchange!\nВыберите операцию:",
-        reply_markup=get_main_keyboard()
-    )
-
-
-@router.callback_query(F.data == "buy_vnd")
-async def handle_buy_vnd(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "Выберите валюту, которую хотите отдать:",
-        reply_markup=get_currency_keyboard()
-    )
-    await state.set_state(ExchangeStates.select_currency)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "back_to_menu")
-async def handle_back_to_menu(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text(
-        "Добро пожаловать в LamKao Exchange!\nВыберите операцию:",
-        reply_markup=get_main_keyboard()
-    )
-    await callback.answer()
-
-
-@router.callback_query(ExchangeStates.select_currency)
-async def process_currency_selection(callback: CallbackQuery, state: FSMContext):
-    currency_code = callback.data.replace("currency:", "")
-    rate = RATES.get(currency_code)
-    input_currency = INPUT_CURRENCY.get(currency_code, "рублях")
-    
-    if rate:
-        await state.update_data(currency=currency_code, rate=rate)
-        await callback.message.edit_text(
-            f"Введите сумму в {input_currency}, которую хотите обменять:"
-        )
-        await state.set_state(ExchangeStates.enter_amount)
-    
-    await callback.answer()
-
-
-@router.message(ExchangeStates.enter_amount)
-async def process_amount_input(message: Message, state: FSMContext):
-    try:
-        amount = float(message.text.replace(",", "."))
-        if amount <= 0:
-            await message.answer("Сумма должна быть положительной. Попробуйте снова:")
-            return
-        
-        data = await state.get_data()
-        rate = data["rate"]
-        currency = data["currency"]
-        vnd_amount = int(amount * rate)
-        
-        if currency == "RUB":
-            amount_display = f"{int(amount):,} RUB"
-        elif currency == "USDT":
-            amount_display = f"{amount:.2f} USDT"
-        else:
-            amount_display = f"{amount:.2f} USD"
-        
-        await state.update_data(
-            amount=amount,
-            amount_vnd=vnd_amount,
-            amount_display=amount_display
-        )
-        
-        await message.answer(
-            f"🔄 Ваша заявка:\n"
-            f"Отдаете: {amount_display}\n"
-            f"Получаете: {vnd_amount:,} VND\n"
-            f"Подтверждаете?",
-            reply_markup=get_confirm_keyboard()
-        )
-        await state.set_state(ExchangeStates.confirm_exchange)
-        
-    except ValueError:
-        await message.answer("Пожалуйста, введите число. Попробуйте снова:")
-
-
-@router.callback_query(F.data == "back_to_amount")
-async def handle_back_to_amount(callback: CallbackQuery, state: FSMContext):
+@router.message(ServiceStates.waiting_for_description)
+async def process_service_description(message: Message, state: FSMContext, bot: Bot):
+    """Клиент прислал описание/сумму. Заявка готова."""
+    description = message.text
     data = await state.get_data()
-    currency = data.get("currency", "RUB")
-    input_currency = INPUT_CURRENCY.get(currency, "рублях")
-    
-    await state.set_state(ExchangeStates.enter_amount)
-    await callback.message.edit_text(
-        f"Введите сумму в {input_currency}, которую хотите обменять:"
+    photo_id = data.get('service_photo') # Получаем ID фото, которое клиент скинул шагом ранее
+    user_id = message.from_user.id
+    username = message.from_user.username or "NoUsername"
+
+    # Формируем красивую карточку для админа
+    caption = (
+        f"💳 <b>НОВАЯ ЗАЯВКА НА СЕРВИС</b>\n"
+        f"👤 Клиент: @{username} (ID: <code>{user_id}</code>)\n"
+        f"📝 Запрос: {description}"
     )
-    await callback.answer()
 
+    # Клавиатура управления для Админа
+    keyboard = get_service_action_keyboard(user_id)
 
-@router.callback_query(ExchangeStates.confirm_exchange)
-async def process_confirmation(callback: CallbackQuery, state: FSMContext, bot):
-    user_id = callback.from_user.id
-    username = callback.from_user.username or "Без username"
-    
-    if callback.data == "confirm_exchange":
-        data = await state.get_data()
-        amount_display = data["amount_display"]
-        amount_vnd = data["amount_vnd"]
-        
-        await callback.message.edit_text(
-            "Заявка отправлена менеджеру. Ожидайте реквизиты."
-        )
-        
-        await bot.send_message(
-            ADMIN_ID,
-            f"🔔 НОВАЯ ЗАЯВКА!\n"
-            f"Клиент: @{username} (ID: {user_id})\n"
-            f"Отдает: {amount_display}\n"
-            f"Нужно выдать: {amount_vnd:,} VND",
-            reply_markup=get_admin_order_keyboard(user_id, amount_display, amount_vnd, username)
-        )
-        
-    elif callback.data == "cancel_exchange":
-        await state.clear()
-        await callback.message.edit_text(
-            "Заявка отменена.\n/start - начать заново"
-        )
-    
-    await callback.answer()
+    # Отправляем админу фото + текст + кнопки
+    if photo_id:
+        await bot.send_photo(ADMIN_ID, photo=photo_id, caption=caption, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        # Если вдруг фото нет (хотя по логике должно быть), шлем просто текст
+        await bot.send_message(ADMIN_ID, caption, reply_markup=keyboard, parse_mode="HTML")
 
+    await message.answer("✅ Заявка отправлена менеджеру! Ожидайте расчета стоимости.")
+    await state.clear()
 
-@router.callback_query(F.data == "user_paid")
-async def handle_user_paid(callback: CallbackQuery, state: FSMContext, bot):
-    data = await state.get_data()
-    amount_display = data.get("amount_display", "N/A")
-    
-    await bot.send_message(
-        ADMIN_ID,
-        f"💰 Клиент @{callback.from_user.username} сообщил об оплате {amount_display}."
-    )
-    
-    await callback.message.edit_text("Ожидайте подтверждения от менеджера...")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "ask_manager")
-async def start_chat(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(ChatStates.in_chat)
-    await callback.message.edit_text(
-        "Вы вошли в режим чата с менеджером. Напишите ваш вопрос ниже.",
-        reply_markup=get_chat_keyboard()
-    )
-    await callback.answer()
-
+# --- ЧАТ С МЕНЕДЖЕРОМ (КЛИЕНТСКАЯ ЧАСТЬ) ---
 
 @router.message(ChatStates.in_chat)
-async def handle_chat_message(message: Message, state: FSMContext, bot):
+async def process_chat_message(message: Message, bot: Bot):
+    """Клиент пишет сообщение, находясь в режиме чата."""
     user_id = message.from_user.id
-    username = message.from_user.username or "Без username"
+    username = message.from_user.username or "NoUsername"
+
+    # Формируем сообщение для админа
+    admin_text = (
+        f"📩 <b>Сообщение от клиента</b> @{username}:\n\n"
+        f"{message.text}"
+    )
+
+    # Прикрепляем ту же клавиатуру действий, чтобы админ мог сразу ответить или выставить счет
+    keyboard = get_service_action_keyboard(user_id)
+
+    await bot.send_message(ADMIN_ID, admin_text, reply_markup=keyboard, parse_mode="HTML")
+    
+    # Подтверждаем клиенту (опционально, можно убрать, чтобы не спамить)
+    # await message.answer("Отправлено.", reply_markup=get_chat_keyboard())
+
+@router.callback_query(F.data == "stop_chat")
+async def stop_chat_user(callback: CallbackQuery, state: FSMContext):
+    """Клиент нажал кнопку выхода из чата."""
+    await state.clear()
+    await callback.message.answer("Вы вышли из режима чата.", reply_markup=get_main_keyboard())
+    await callback.answer()
+
+# --- ОПЛАТА СЧЕТА ---
+
+@router.callback_query(F.data.startswith("service_paid:"))
+async def process_service_paid(callback: CallbackQuery, bot: Bot):
+    """Клиент нажал 'Я оплатил'."""
+    amount = callback.data.split(":")[1]
+    username = callback.from_user.username or "NoUsername"
     
     await bot.send_message(
-        ADMIN_ID,
-        f"Сообщение от @{username} (ID: {user_id}):\n\n\"{message.text}\"",
-        reply_markup=get_admin_chat_keyboard(user_id)
+        ADMIN_ID, 
+        f"💰 <b>ОПЛАТА СЕРВИСА!</b>\nКлиент @{username} оплатил <b>{amount} RUB</b>.\nПроверьте поступление."
     )
-    
-    await message.answer(
-        "Сообщение отправлено менеджеру. Ждите ответа.",
-        reply_markup=get_chat_keyboard()
-    )
-
-
-@router.callback_query(ChatStates.in_chat, F.data == "stop_chat")
-async def stop_chat(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text(
-        "Вы вышли из режима чата.",
-        reply_markup=None
-    )
+    await callback.message.edit_text(f"✅ Вы сообщили об оплате {amount} RUB.\nМенеджер проверит и пришлет чек/код.")
     await callback.answer()

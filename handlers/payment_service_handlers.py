@@ -4,10 +4,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
-from keyboards.keyboards import get_main_keyboard
+from keyboards.keyboards import get_main_keyboard, get_service_request_keyboard
 from states.states import PaymentServiceStates
 
 router = Router()
+
+service_requests = {}
 
 
 @router.callback_query(F.data == "qr_payment")
@@ -43,17 +45,19 @@ async def process_description(message: Message, state: FSMContext, bot):
     photo_file_id = data["photo_file_id"]
     description = message.text
     
-    await bot.send_message(
-        ADMIN_ID,
-        f"💳 НОВАЯ ЗАЯВКА НА ОПЛАТУ СЕРВИСА\n"
-        f"Клиент: @{username} (ID: {user_id})\n"
-        f"Описание: {description}"
-    )
+    service_requests[user_id] = {
+        "photo_file_id": photo_file_id,
+        "description": description,
+        "username": username
+    }
     
     await bot.send_photo(
         ADMIN_ID,
         photo_file_id,
-        caption=f"Фото от @{username}"
+        caption=f"💳 НОВАЯ ЗАЯВКА НА ОПЛАТУ СЕРВИСА\n"
+                 f"Клиент: @{username} (ID: {user_id})\n"
+                 f"Запрос: {description}",
+        reply_markup=get_service_request_keyboard(user_id)
     )
     
     await message.answer(
@@ -64,7 +68,8 @@ async def process_description(message: Message, state: FSMContext, bot):
     await state.clear()
 
 
-@router.message(Command("cancel"))
+@router.message(PaymentServiceStates.waiting_photo, Command("cancel"))
+@router.message(PaymentServiceStates.waiting_description, Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(

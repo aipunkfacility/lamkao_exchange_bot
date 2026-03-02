@@ -1,145 +1,123 @@
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-import random
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import ADMIN_ID, ADMIN_CARD
+from config import ADMIN_ID, SBER_CARD
 from keyboards.keyboards import (
-    get_admin_order_keyboard,
-    get_admin_payment_confirm_keyboard,
-    get_payment_confirm_keyboard,
-    get_chat_keyboard,
-    get_admin_chat_keyboard,
+    ServiceCallback,
+    get_service_action_keyboard
 )
-from states.states import AdminChat
+from states.states import AdminChat, AdminStates, ChatStates
 
 router = Router()
 
-user_sessions = {}
+# --- ОБРАБОТКА ЗАЯВКИ НА СЕРВИС (ВЫСТАВИТЬ СЧЕТ) ---
 
-
-@router.callback_query(F.data.startswith("approve:"))
-async def handle_approve(callback: CallbackQuery, bot: Bot):
-    parts = callback.data.split(":")
-    user_id = int(parts[1])
-    amount_display = parts[2].replace("_", " ")
-    amount_vnd = int(parts[3])
-    username = parts[4]
-    
-    order_number = random.randint(1000, 9999)
-    
-    await bot.send_message(
-        user_id,
-        f"✅ Заявка одобрена!\n"
-        f"Переведите {amount_display} на карту Сбербанка: {ADMIN_CARD}\n"
-        f"После перевода нажмите кнопку ниже.",
-        reply_markup=get_payment_confirm_keyboard()
-    )
-    
-    user_sessions[user_id] = {
-        "amount_display": amount_display,
-        "amount_vnd": amount_vnd,
-        "order_number": order_number
-    }
-    
-    await callback.message.edit_text(
-        f"✅ Заявка одобрена для @{username}\n"
-        f"Заказ #{order_number} создан"
-    )
-    
-    await bot.send_message(
-        ADMIN_ID,
-        "Выберите действие:",
-        reply_markup=get_admin_payment_confirm_keyboard(user_id)
-    )
-    
+@router.callback_query(ServiceCallback.filter(F.action == "bill"))
+async def start_service_bill(callback: CallbackQuery, callback_data: ServiceCallback, state: FSMContext):
+    """Админ нажал 'Выставить счет'."""
+    await state.update_data(bill_client_id=callback_data.user_id)
+    await state.set_state(AdminStates.waiting_for_service_amount)
+    await callback.message.answer("Введите сумму счета в РУБЛЯХ (только число):")
     await callback.answer()
 
+@router.message(AdminStates.waiting_for_service_amount, F.from_user.id == ADMIN_ID)
+async def process_service_bill_amount(message: Message, state: FSMContext, bot: Bot):
+    """Админ ввел сумму счета."""
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите только число.")
+        return
 
-@router.callback_query(F.data.startswith("reject:"))
-async def handle_reject(callback: CallbackQuery, bot: Bot):
-    user_id = int(callback.data.split(":")[1])
-    
-    await bot.send_message(
-        user_id,
-        "❌ К сожалению, ваша заявка отклонена. Попробуйте позже или свяжитесь с менеджером."
-    )
-    
-    await callback.message.edit_text("Заявка отклонена")
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("payment_confirmed:"))
-async def handle_payment_confirmed(callback: CallbackQuery, bot: Bot):
-    user_id = int(callback.data.split(":")[1])
-    session = user_sessions.get(user_id)
-    
-    if session:
-        order_number = session["order_number"]
-        amount_vnd = session["amount_vnd"]
-        
-        await bot.send_message(
-            user_id,
-            f"✅ Оплата получена! Подойдите на ресепшен и назовите код: "
-            f"Заказ #{order_number}. Вам выдадут {amount_vnd:,} VND."
-        )
-        
-        await bot.send_message(
-            ADMIN_ID,
-            f"✅ Заказ #{order_number} сгенерирован и отправлен клиенту "
-            f"для выдачи {amount_vnd:,} VND."
-        )
-        
-        await callback.message.edit_text(f"✅ Заказ #{order_number} завершен")
-        del user_sessions[user_id]
-    
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("chat_reply:"))
-async def handle_admin_reply_start(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    client_id = callback.data.split(":")[1]
-    
-    await state.update_data(client_to_reply=int(client_id))
-    await state.set_state(AdminChat.replying_to_user)
-    
-    await callback.message.edit_reply_markup(reply_markup=None)
-    
-    await callback.message.answer(
-        f"Введите ваш ответ для клиента (ID: {client_id}):"
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("chat_end:"))
-async def handle_admin_end_chat(callback: CallbackQuery, bot: Bot):
-    client_id = int(callback.data.split(":")[1])
-    
-    await bot.send_message(
-        client_id,
-        "Менеджер завершил чат. Если у вас новый вопрос, начните заново."
-    )
-    
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(f"Вы завершили чат с клиентом (ID: {client_id}).")
-    await callback.answer()
-
-
-@router.message(AdminChat.replying_to_user)
-async def handle_admin_response(message: Message, state: FSMContext, bot: Bot):
+    amount = int(message.text)
     data = await state.get_data()
-    client_id = data.get("client_to_reply")
+    client_id = data.get('bill_client_id')
+
+    # Формируем кнопку оплаты для клиента
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧾 Я оплатил", callback_data=f"service_paid:{amount}")
     
-    if not client_id:
-        await message.answer("Ошибка: клиент не найден.")
+    # Отправляем счет клиенту
+    try:
+        await bot.send_message(
+            client_id,
+            f"✅ <b>Заявка подтверждена!</b>\n\n"
+            f"К оплате: <b>{amount} RUB</b>\n"
+            f"Реквизиты: <code>{SBER_CARD}</code>\n\n"
+            f"После перевода нажмите кнопку ниже.",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+    except Exception as e:
+        await message.answer(f"Ошибка отправки клиенту: {e}")
         await state.clear()
         return
+
+    # Возвращаем админу управление
+    await message.answer(f"✅ Счет на {amount} RUB выставлен клиенту.")
     
-    await bot.send_message(
-        client_id,
-        f"💬 Ответ от менеджера:\n\n{message.text}",
-        reply_markup=get_chat_keyboard()
-    )
-    
-    await message.answer(f"✅ Ваш ответ отправлен клиенту (ID: {client_id}).")
+    # Показываем меню действий, чтобы админ мог продолжить общение
+    keyboard = get_service_action_keyboard(client_id)
+    await message.answer("Меню управления заявкой:", reply_markup=keyboard)
     await state.clear()
+
+# --- ЛОГИКА ЧАТА (ОТВЕТ АДМИНА) ---
+
+@router.callback_query(ServiceCallback.filter(F.action == "reply"))
+async def start_admin_reply(callback: CallbackQuery, callback_data: ServiceCallback, state: FSMContext):
+    """Админ нажал 'Написать/Ответить'."""
+    await state.update_data(reply_client_id=callback_data.user_id)
+    await state.set_state(AdminChat.replying_to_user)
+    await callback.message.answer(f"Введите ответ для клиента (ID: {callback_data.user_id}):")
+    await callback.answer()
+
+@router.message(AdminChat.replying_to_user, F.from_user.id == ADMIN_ID)
+async def send_admin_reply(message: Message, state: FSMContext, bot: Bot):
+    """Админ отправил текст ответа."""
+    data = await state.get_data()
+    client_id = data.get('reply_client_id')
+
+    # 1. Отправляем сообщение клиенту
+    try:
+        # Кнопка для клиента, чтобы выйти из чата (опционально)
+        client_kb = InlineKeyboardBuilder()
+        client_kb.button(text="❌ Завершить чат", callback_data="stop_chat")
+        
+        await bot.send_message(
+            client_id, 
+            f"💬 <b>Сообщение от менеджера:</b>\n\n{message.text}",
+            parse_mode="HTML",
+            reply_markup=client_kb.as_markup()
+        )
+    except Exception as e:
+        await message.answer(f"Не удалось отправить сообщение: {e}")
+        await state.clear()
+        return
+
+    # 2. ПРИНУДИТЕЛЬНО ПЕРЕВОДИМ КЛИЕНТА В РЕЖИМ ЧАТА (ВАРИАНТ А)
+    # Используем StorageKey для доступа к состоянию другого юзера
+    try:
+        state_key = StorageKey(bot_id=bot.id, chat_id=client_id, user_id=client_id)
+        # Создаем контекст. Важно: используем storage из текущего state админа
+        client_state = FSMContext(storage=state.storage, key=state_key)
+        await client_state.set_state(ChatStates.in_chat)
+    except Exception as e:
+        await message.answer(f"⚠️ Сообщение ушло, но не удалось перевести клиента в режим чата: {e}")
+
+    # 3. Возвращаем админу меню управления
+    await message.answer("✅ Ответ отправлен.")
+    keyboard = get_service_action_keyboard(client_id)
+    await message.answer("Меню управления заявкой:", reply_markup=keyboard)
+    
+    await state.clear()
+
+@router.callback_query(ServiceCallback.filter(F.action == "reject"))
+async def reject_service(callback: CallbackQuery, callback_data: ServiceCallback, bot: Bot):
+    """Админ отклонил заявку."""
+    try:
+        await bot.send_message(callback_data.user_id, "❌ Ваша заявка отклонена менеджером.")
+    except:
+        pass
+    await callback.message.edit_text("❌ Заявка отклонена.")
+    await callback.answer()

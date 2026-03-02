@@ -19,3 +19,7 @@ class ChatStates(StatesGroup):
 
 class AdminChat(StatesGroup):
     replying_to_user = State()
+
+
+class AdminServiceStates(StatesGroup):
+    waiting_for_service_amount = State()
