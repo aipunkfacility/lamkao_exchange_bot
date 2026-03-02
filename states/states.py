@@ -11,3 +11,11 @@ class ExchangeStates(StatesGroup):
 class PaymentServiceStates(StatesGroup):
     waiting_photo = State()
     waiting_description = State()
+
+
+class ChatStates(StatesGroup):
+    in_chat = State()
+
+
+class AdminChat(StatesGroup):
+    replying_to_user = State()

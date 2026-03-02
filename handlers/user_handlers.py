@@ -9,8 +9,10 @@ from keyboards.keyboards import (
     get_currency_keyboard,
     get_confirm_keyboard,
     get_admin_order_keyboard,
+    get_chat_keyboard,
+    get_admin_chat_keyboard,
 )
-from states.states import ExchangeStates
+from states.states import ExchangeStates, ChatStates
 
 router = Router()
 
@@ -155,4 +157,41 @@ async def handle_user_paid(callback: CallbackQuery, state: FSMContext, bot):
     )
     
     await callback.message.edit_text("Ожидайте подтверждения от менеджера...")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "ask_manager")
+async def start_chat(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(ChatStates.in_chat)
+    await callback.message.edit_text(
+        "Вы вошли в режим чата с менеджером. Напишите ваш вопрос ниже.",
+        reply_markup=get_chat_keyboard()
+    )
+    await callback.answer()
+
+
+@router.message(ChatStates.in_chat)
+async def handle_chat_message(message: Message, state: FSMContext, bot):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Без username"
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"Сообщение от @{username} (ID: {user_id}):\n\n\"{message.text}\"",
+        reply_markup=get_admin_chat_keyboard(user_id)
+    )
+    
+    await message.answer(
+        "Сообщение отправлено менеджеру. Ждите ответа.",
+        reply_markup=get_chat_keyboard()
+    )
+
+
+@router.callback_query(ChatStates.in_chat, F.data == "stop_chat")
+async def stop_chat(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "Вы вышли из режима чата.",
+        reply_markup=None
+    )
     await callback.answer()

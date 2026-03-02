@@ -7,6 +7,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Купить Донги (VND)", callback_data="buy_vnd")
     builder.button(text="Оплатить сервис/QR", callback_data="qr_payment")
+    builder.button(text="❓ Связаться с менеджером", callback_data="ask_manager")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -55,4 +56,24 @@ def get_admin_payment_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
         text="✅ Деньги пришли",
         callback_data=f"payment_confirmed:{user_id}"
     )
+    return builder.as_markup()
+
+
+def get_chat_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Завершить чат", callback_data="stop_chat")
+    return builder.as_markup()
+
+
+def get_admin_chat_keyboard(client_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="💬 Ответить клиенту",
+        callback_data=f"chat_reply:{client_id}"
+    )
+    builder.button(
+        text="❌ Завершить чат с этим клиентом",
+        callback_data=f"chat_end:{client_id}"
+    )
+    builder.adjust(2)
     return builder.as_markup()
