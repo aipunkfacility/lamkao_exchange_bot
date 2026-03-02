@@ -18,7 +18,7 @@ user_sessions = {}
 async def handle_approve(callback: CallbackQuery, bot: Bot):
     parts = callback.data.split(":")
     user_id = int(parts[1])
-    amount_rub = int(parts[2])
+    amount_display = parts[2].replace("_", " ")
     amount_vnd = int(parts[3])
     username = parts[4]
     
@@ -27,13 +27,13 @@ async def handle_approve(callback: CallbackQuery, bot: Bot):
     await bot.send_message(
         user_id,
         f"✅ Заявка одобрена!\n"
-        f"Переведите {amount_rub:,} RUB на карту Сбербанка: {ADMIN_CARD}\n"
+        f"Переведите {amount_display} на карту Сбербанка: {ADMIN_CARD}\n"
         f"После перевода нажмите кнопку ниже.",
         reply_markup=get_payment_confirm_keyboard()
     )
     
     user_sessions[user_id] = {
-        "amount_rub": amount_rub,
+        "amount_display": amount_display,
         "amount_vnd": amount_vnd,
         "order_number": order_number
     }

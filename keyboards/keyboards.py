@@ -2,6 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import CURRENCY_NAMES
 
+
 def get_main_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Купить Донги (VND)", callback_data="buy_vnd")
@@ -14,6 +15,7 @@ def get_currency_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for code, name in CURRENCY_NAMES.items():
         builder.button(text=name, callback_data=f"currency:{code}")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -21,7 +23,7 @@ def get_currency_keyboard() -> InlineKeyboardMarkup:
 def get_confirm_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Подтвердить", callback_data="confirm_exchange")
-    builder.button(text="❌ Отменить", callback_data="cancel_exchange")
+    builder.button(text="🔙 Назад", callback_data="back_to_amount")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -32,11 +34,12 @@ def get_payment_confirm_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_admin_order_keyboard(user_id: int, amount_rub: int, amount_vnd: int, username: str) -> InlineKeyboardMarkup:
+def get_admin_order_keyboard(user_id: int, amount_display: str, amount_vnd: int, username: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    amount_for_callback = amount_display.replace(" ", "_")
     builder.button(
         text="✅ Одобрить (Дать реквизиты)",
-        callback_data=f"approve:{user_id}:{amount_rub}:{amount_vnd}:{username}"
+        callback_data=f"approve:{user_id}:{amount_for_callback}:{amount_vnd}:{username}"
     )
     builder.button(
         text="❌ Отклонить",

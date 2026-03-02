@@ -18,4 +18,10 @@ CURRENCY_NAMES = {
     "USD_CASH": "Наличные Доллары",
 }
 
+INPUT_CURRENCY = {
+    "RUB": "рублях",
+    "USDT": "USDT",
+    "USD_CASH": "долларах",
+}
+
 ADMIN_CARD = "1111 2222 3333 4444"
