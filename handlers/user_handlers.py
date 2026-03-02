@@ -34,11 +34,6 @@ async def handle_buy_vnd(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "qr_payment")
-async def handle_qr_payment(callback: CallbackQuery):
-    await callback.answer("В разработке", show_alert=True)
-
-
 @router.callback_query(F.data == "back_to_menu")
 async def handle_back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()

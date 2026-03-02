@@ -6,3 +6,8 @@ class ExchangeStates(StatesGroup):
     enter_amount = State()
     confirm_exchange = State()
     waiting_payment = State()
+
+
+class PaymentServiceStates(StatesGroup):
+    waiting_photo = State()
+    waiting_description = State()
