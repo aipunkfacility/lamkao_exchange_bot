@@ -8,6 +8,7 @@ from config import ADMIN_ID, RATES, CURRENCY_NAMES
 from keyboards.keyboards import (
     get_main_keyboard,
     get_service_action_keyboard,
+    get_service_confirm_keyboard,
     get_chat_keyboard,
     get_currency_keyboard,
     get_confirm_keyboard,
@@ -108,11 +109,13 @@ async def process_service_paid(callback: CallbackQuery, bot: Bot):
     """Клиент нажал 'Я оплатил'."""
     amount = callback.data.split(":")[1]
     username = callback.from_user.username or "NoUsername"
+    user_id = callback.from_user.id
     
     await bot.send_message(
         ADMIN_ID, 
         f"💰 <b>ОПЛАТА СЕРВИСА!</b>\nКлиент @{username} оплатил <b>{amount} RUB</b>.\nПроверьте поступление.",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_service_confirm_keyboard(user_id)
     )
     await callback.message.edit_text(f"✅ Вы сообщили об оплате {amount} RUB.\nМенеджер проверит и пришлет чек/код.")
     await callback.answer()

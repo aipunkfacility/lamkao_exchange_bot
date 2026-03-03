@@ -112,6 +112,17 @@ def get_service_payment_keyboard(amount: int) -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
+def get_service_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Кнопка для админа: Подтвердить получение денег за сервис"""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Деньги пришли (Завершить)",
+        callback_data=ServiceCallback(action="confirm_pay", user_id=user_id),
+        style="success"
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
 # --- КЛАВИАТУРЫ ДЛЯ ОБМЕНА ВАЛЮТЫ ---
 
 def get_exchange_keyboard(user_id: int, amount: str, currency: str, vnd_amount: int) -> InlineKeyboardMarkup:

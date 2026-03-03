@@ -148,6 +148,65 @@ async def reject_service(callback: CallbackQuery, callback_data: ServiceCallback
     await callback.message.edit_text("❌ Заявка отклонена.")
     await callback.answer()
 
+
+@router.callback_query(ServiceCallback.filter(F.action == "confirm_pay"))
+async def confirm_service_payment(callback: CallbackQuery, callback_data: ServiceCallback, state: FSMContext, bot: Bot):
+    """Админ подтвердил оплату. Запрашиваем чек/билет."""
+    client_id = callback_data.user_id
+    
+    # 1. Уведомляем клиента, что процесс пошел
+    try:
+        await bot.send_message(
+            client_id,
+            "✅ <b>Оплата получена!</b>\n"
+            "Менеджер оформляет ваш заказ. Ожидайте чек/билет/код в следующем сообщении...",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    # 2. Переводим админа в режим ожидания файла
+    await state.update_data(result_client_id=client_id)
+    await state.set_state(AdminStates.waiting_for_service_result)
+    
+    await callback.message.edit_text(
+        "✅ Оплата подтверждена.\n\n"
+        "📎 <b>Теперь отправьте итоговый результат для клиента:</b>\n"
+        "Это может быть файл (PDF билет), фотография (чек) или просто текст (код бронирования).",
+        reply_markup=None,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_for_service_result, F.from_user.id == ADMIN_ID)
+async def send_service_result_to_client(message: Message, state: FSMContext, bot: Bot):
+    """Админ отправил итоговый файл/текст. Пересылаем клиенту."""
+    data = await state.get_data()
+    client_id = data.get("result_client_id")
+    
+    if not client_id:
+        await message.answer("Ошибка: ID клиента потерян.")
+        await state.clear()
+        return
+
+    try:
+        # Пересылаем 1в1 (фото, PDF, текст)
+        await message.copy_to(
+            chat_id=client_id,
+            caption=message.caption if message.caption else "✅ Ваш заказ выполнен. Спасибо, что выбрали нас!"
+        )
+        
+        # Если это был просто текст, copy_to отправит его
+        if not message.photo and not message.document:
+            await bot.send_message(client_id, "✅ Ваш заказ выполнен. Спасибо, что выбрали нас!")
+        
+        await message.answer("✅ Результат успешно отправлен клиенту. Сделка закрыта.")
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при отправке клиенту: {e}")
+    
+    await state.clear()
+
 # --- ОБРАБОТКА ЗАЯВКИ НА ОБМЕН ВАЛЮТЫ ---
 
 @router.callback_query(ExchangeCallback.filter(F.action == "approve"))

@@ -18,6 +18,7 @@ class ServiceStates(StatesGroup):
 class AdminStates(StatesGroup):
     """Состояния для действий администратора"""
     waiting_for_service_amount = State() # Ожидание ввода суммы счета для сервиса
+    waiting_for_service_result = State()  # Ожидание отправки результата (чек/билет/код) клиенту
 
 class AdminChat(StatesGroup):
     """Состояния для чата со стороны администратора"""
