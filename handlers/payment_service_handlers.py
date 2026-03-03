@@ -5,23 +5,21 @@ from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
 from keyboards.keyboards import get_main_keyboard, get_service_request_keyboard
-from states.states import PaymentServiceStates
+from states.states import ServiceStates
 
 router = Router()
-
-service_requests = {}
 
 
 @router.callback_query(F.data == "qr_payment")
 async def start_qr_payment(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await callback.message.answer(
         "📸 Отправьте фото QR-кода или скриншот оплаты:"
     )
-    await state.set_state(PaymentServiceStates.waiting_photo)
+    await state.set_state(ServiceStates.waiting_for_photo)
     await callback.answer()
 
 
-@router.message(PaymentServiceStates.waiting_photo)
+@router.message(ServiceStates.waiting_for_photo)
 async def process_photo(message: Message, state: FSMContext):
     if not message.photo:
         await message.answer("Пожалуйста, отправьте фото. Нажмите /cancel для отмены.")
@@ -33,23 +31,22 @@ async def process_photo(message: Message, state: FSMContext):
     await message.answer(
         "📝 Теперь введите сумму и описание (например: '1000 RUB, оплата за тур'):"
     )
-    await state.set_state(PaymentServiceStates.waiting_description)
+    await state.set_state(ServiceStates.waiting_for_description)
 
 
-@router.message(PaymentServiceStates.waiting_description)
+@router.message(ServiceStates.waiting_for_description)
 async def process_description(message: Message, state: FSMContext, bot):
     user_id = message.from_user.id
     username = message.from_user.username or "Без username"
     
     data = await state.get_data()
-    photo_file_id = data["photo_file_id"]
+    photo_file_id = data.get("photo_file_id")
     description = message.text
     
-    service_requests[user_id] = {
-        "photo_file_id": photo_file_id,
-        "description": description,
-        "username": username
-    }
+    await state.update_data(
+        description=description,
+        username=username
+    )
     
     await bot.send_photo(
         ADMIN_ID,
@@ -68,8 +65,8 @@ async def process_description(message: Message, state: FSMContext, bot):
     await state.clear()
 
 
-@router.message(PaymentServiceStates.waiting_photo, Command("cancel"))
-@router.message(PaymentServiceStates.waiting_description, Command("cancel"))
+@router.message(ServiceStates.waiting_for_photo, Command("cancel"))
+@router.message(ServiceStates.waiting_for_description, Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
