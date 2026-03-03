@@ -1,27 +1,23 @@
-from os import getenv
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = getenv("BOT_TOKEN", "")
-ADMIN_ID = int(getenv("ADMIN_ID") or 0)
+# Основные настройки из .env
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+SBER_CARD = os.getenv("SBER_CARD", "Реквизиты не указаны") # Подтягиваем номер карты
 
+# Курсы валют для демо (можно менять здесь)
 RATES = {
-    "RUB": 270,
-    "USDT": 25500,
-    "USD_CASH": 25400,
+    "RUB": 270,    # 1 рубль = 270 донгов
+    "USDT": 25500, # 1 USDT = 25500 донгов
+    "USD": 25400   # 1 USD = 25400 донгов
 }
 
+# Названия валют для кнопок
 CURRENCY_NAMES = {
-    "RUB": "Рубли (Безнал)",
-    "USDT": "USDT",
-    "USD_CASH": "Наличные Доллары",
+    "RUB": "Рубли (РФ Банки)",
+    "USDT": "USDT / Крипта",
+    "USD": "Наличные USD"
 }
-
-INPUT_CURRENCY = {
-    "RUB": "рублях",
-    "USDT": "USDT",
-    "USD_CASH": "долларах",
-}
-
-ADMIN_CARD = "1111 2222 3333 4444"

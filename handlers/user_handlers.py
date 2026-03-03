@@ -2,6 +2,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import ADMIN_ID, RATES, CURRENCY_NAMES
 from keyboards.keyboards import (
@@ -9,7 +10,8 @@ from keyboards.keyboards import (
     get_service_action_keyboard,
     get_chat_keyboard,
     get_currency_keyboard,
-    get_confirm_keyboard
+    get_confirm_keyboard,
+    get_exchange_keyboard
 )
 from states.states import ChatStates, ServiceStates, ExchangeStates
 
@@ -60,7 +62,7 @@ async def process_service_description(message: Message, state: FSMContext, bot: 
 # --- ЧАТ С МЕНЕДЖЕРОМ (КЛИЕНТСКАЯ ЧАСТЬ) ---
 
 @router.message(ChatStates.in_chat)
-async def process_chat_message(message: Message, bot: Bot):
+async def process_chat_message(message: Message, state: FSMContext, bot: Bot):
     """Клиент пишет сообщение, находясь в режиме чата."""
     user_id = message.from_user.id
     username = message.from_user.username or "NoUsername"
@@ -71,8 +73,21 @@ async def process_chat_message(message: Message, bot: Bot):
         f"{message.text}"
     )
 
-    # Прикрепляем ту же клавиатуру действий, чтобы админ мог сразу ответить или выставить счет
-    keyboard = get_service_action_keyboard(user_id)
+    # Читаем данные из state клиента
+    data = await state.get_data()
+    chat_type = data.get("chat_type")
+    
+    if chat_type == "exchange":
+        # Если это обмен - возвращаем кнопку "Одобрить"
+        keyboard = get_exchange_keyboard(
+            user_id=user_id,
+            amount=data.get("exchange_amount", ""),
+            currency=data.get("exchange_currency", ""),
+            vnd_amount=data.get("exchange_vnd_amount", 0)
+        )
+    else:
+        # Иначе (сервис) - кнопку "Выставить счет"
+        keyboard = get_service_action_keyboard(user_id)
 
     await bot.send_message(ADMIN_ID, admin_text, reply_markup=keyboard, parse_mode="HTML")
     
@@ -165,7 +180,7 @@ async def enter_amount(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "confirm_exchange")
 async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    """Клиент подтвердил обмен."""
+    """ШАГ 1: Клиент подтвердил обмен."""
     user_id = callback.from_user.id
     username = callback.from_user.username or "Без username"
     
@@ -182,16 +197,17 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot)
         f"💴 Получает: <b>{vnd_amount:,} VND</b>"
     )
     
+    # ПЕРЕДАЁМ vnd_amount В КЛАВИАТУРУ!
     await bot.send_message(
         ADMIN_ID,
         admin_text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_exchange_keyboard(user_id, f"{amount} {currency}", currency, vnd_amount)
     )
     
     await callback.message.edit_text(
         f"✅ Заявка отправлена!\n\n"
-        f"Менеджер свяжется с вами в ближайшее время.\n"
-        f"Курс обмена: 1 {currency} = {RATES.get(currency, 0):,} VND",
+        f"Менеджер свяжется с вами в ближайшее время.",
         reply_markup=get_main_keyboard()
     )
     await state.clear()
@@ -204,6 +220,44 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.answer(
         "Выберите операцию:",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("exchange_paid:"))
+async def process_exchange_paid(callback: CallbackQuery, bot: Bot):
+    """ШАГ 3: Клиент нажал 'Я оплатил'."""
+    # Парсим данные из callback_data: "exchange_paid:1000 RUB:RUB:270000"
+    parts = callback.data.split(":")
+    amount = parts[1]   # "1000 RUB"
+    currency = parts[2]  # "RUB"
+    vnd_amount = int(parts[3])  # 270000
+    
+    username = callback.from_user.username or "Без username"
+    user_id = callback.from_user.id
+    
+    # Формируем клавиатуру для админа
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Деньги пришли", 
+        callback_data=f"exchange_confirmed:{user_id}:{vnd_amount}",
+        style="success"
+    )
+    
+    await bot.send_message(
+        ADMIN_ID, 
+        f"💰 <b>ОПЛАТА ОБМЕНА ВАЛЮТЫ!</b>\n"
+        f"Клиент @{username} оплатил <b>{amount}</b>.\n"
+        f"Получить: <b>{vnd_amount:,} VND</b>\n\n"
+        f"Проверьте поступление и нажмите кнопку ниже.",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+    
+    await callback.message.edit_text(
+        f"✅ Вы сообщили об оплате {amount}.\n"
+        f"Менеджер проверит и пришлет код доступа.",
         reply_markup=get_main_keyboard()
     )
     await callback.answer()

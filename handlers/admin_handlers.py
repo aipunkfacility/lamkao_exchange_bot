@@ -1,13 +1,16 @@
+import random
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import ADMIN_ID, SBER_CARD
+from config import ADMIN_ID, SBER_CARD, RATES
 from keyboards.keyboards import (
     ServiceCallback,
-    get_service_action_keyboard
+    ExchangeCallback,
+    get_service_action_keyboard,
+    get_exchange_keyboard
 )
 from states.states import AdminChat, AdminStates, ChatStates
 
@@ -66,8 +69,11 @@ async def process_service_bill_amount(message: Message, state: FSMContext, bot: 
 
 @router.callback_query(ServiceCallback.filter(F.action == "reply"))
 async def start_admin_reply(callback: CallbackQuery, callback_data: ServiceCallback, state: FSMContext):
-    """Админ нажал 'Написать/Ответить'."""
-    await state.update_data(reply_client_id=callback_data.user_id)
+    """Админ нажал 'Написать/Ответить' для сервиса."""
+    await state.update_data(
+        reply_client_id=callback_data.user_id,
+        chat_type="service"
+    )
     await state.set_state(AdminChat.replying_to_user)
     await callback.message.answer(f"Введите ответ для клиента (ID: {callback_data.user_id}):")
     await callback.answer()
@@ -77,6 +83,7 @@ async def send_admin_reply(message: Message, state: FSMContext, bot: Bot):
     """Админ отправил текст ответа."""
     data = await state.get_data()
     client_id = data.get('reply_client_id')
+    chat_type = data.get('chat_type', 'service')
 
     # 1. Отправляем сообщение клиенту
     try:
@@ -102,12 +109,31 @@ async def send_admin_reply(message: Message, state: FSMContext, bot: Bot):
         # Создаем контекст. Важно: используем storage из текущего state админа
         client_state = FSMContext(storage=state.storage, key=state_key)
         await client_state.set_state(ChatStates.in_chat)
+        
+        # ПЕРЕДАЕМ КОНТЕКСТ КЛИЕНТУ:
+        admin_data = await state.get_data()
+        await client_state.update_data(
+            chat_type=admin_data.get("chat_type"),
+            exchange_amount=admin_data.get("exchange_amount"),
+            exchange_currency=admin_data.get("exchange_currency"),
+            exchange_vnd_amount=admin_data.get("exchange_vnd_amount")
+        )
     except Exception as e:
         await message.answer(f"⚠️ Сообщение ушло, но не удалось перевести клиента в режим чата: {e}")
 
-    # 3. Возвращаем админу меню управления
+    # 3. Возвращаем админу меню управления (в зависимости от типа чата)
     await message.answer("✅ Ответ отправлен.")
-    keyboard = get_service_action_keyboard(client_id)
+    
+    if chat_type == "exchange":
+        # Для обмена валют - возвращаем клавиатуру обмена
+        exchange_amount = data.get('exchange_amount', '')
+        exchange_currency = data.get('exchange_currency', '')
+        exchange_vnd_amount = data.get('exchange_vnd_amount', 0)
+        keyboard = get_exchange_keyboard(client_id, exchange_amount, exchange_currency, exchange_vnd_amount)
+    else:
+        # Для сервисов - возвращаем клавиатуру сервиса
+        keyboard = get_service_action_keyboard(client_id)
+    
     await message.answer("Меню управления заявкой:", reply_markup=keyboard)
     
     await state.clear()
@@ -120,4 +146,108 @@ async def reject_service(callback: CallbackQuery, callback_data: ServiceCallback
     except:
         pass
     await callback.message.edit_text("❌ Заявка отклонена.")
+    await callback.answer()
+
+# --- ОБРАБОТКА ЗАЯВКИ НА ОБМЕН ВАЛЮТЫ ---
+
+@router.callback_query(ExchangeCallback.filter(F.action == "approve"))
+async def approve_exchange(callback: CallbackQuery, callback_data: ExchangeCallback, bot: Bot):
+    """ШАГ 2: Админ одобрил заявку на обмен валюты."""
+    client_id = callback_data.user_id
+    amount = callback_data.amount      # "1000 RUB"
+    currency = callback_data.currency  # "RUB"
+    vnd_amount = callback_data.vnd_amount  # 270000
+    
+    # Отправляем реквизиты клиенту с vnd_amount
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧾 Я оплатил", callback_data=f"exchange_paid:{amount}:{currency}:{vnd_amount}", style="success")
+    
+    try:
+        await bot.send_message(
+            client_id,
+            f"✅ <b>Ваша заявка одобрена!</b>\n\n"
+            f"Вы отдаёте: <b>{amount}</b>\n"
+            f"Получаете: <b>{vnd_amount:,} VND</b>\n\n"
+            f"Реквизиты для оплаты:\n"
+            f"💳 Сбер: <code>{SBER_CARD}</code>\n\n"
+            f"После оплаты нажмите кнопку ниже.",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+        
+        await callback.message.edit_text("✅ Заявка одобрено. Реквизиты отправлены клиенту.")
+        
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Не удалось отправить клиенту реквизиты: {e}")
+    
+    await callback.answer()
+
+
+@router.callback_query(ExchangeCallback.filter(F.action == "reject"))
+async def reject_exchange(callback: CallbackQuery, callback_data: ExchangeCallback, bot: Bot):
+    """Админ отклонил заявку на обмен валюты."""
+    client_id = callback_data.user_id
+    
+    try:
+        await bot.send_message(client_id, "❌ Менеджер отклонил вашу заявку на обмен.")
+    except:
+        pass
+    
+    await callback.message.edit_text("❌ Заявка на обмен валюты отклонена.")
+    await callback.answer()
+
+
+@router.callback_query(ExchangeCallback.filter(F.action == "chat"))
+async def start_exchange_chat(callback: CallbackQuery, callback_data: ExchangeCallback, state: FSMContext):
+    """Админ нажал 'Уточнить детали' для обмена валюты - просит текст."""
+    await state.update_data(
+        reply_client_id=callback_data.user_id,
+        chat_type="exchange",
+        exchange_amount=callback_data.amount,
+        exchange_currency=callback_data.currency,
+        exchange_vnd_amount=callback_data.vnd_amount
+    )
+    await state.set_state(AdminChat.replying_to_user)
+    await callback.message.answer(f"Введите сообщение для клиента (ID: {callback_data.user_id}):")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("exchange_confirmed:"))
+async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Админ подтвердил поступление денег - генерирует PIN."""
+    data = callback.data.split(":")
+    client_id = int(data[1])
+    vnd_amount = int(data[2])
+    username = callback.from_user.username or "Админ"
+    
+    # Генерируем 4-значный PIN
+    pin = f"#{random.randint(1000, 9999)}"
+    
+    # Отправляем PIN клиенту
+    try:
+        await bot.send_message(
+            client_id,
+            f"🔑 <b>Ваш секретный код для получения:</b> <b>{pin}</b>\n\n"
+            f"Покажите его на ресепшене для получения <b>{vnd_amount:,} VND</b>.\n\n"
+            f"✅ Обмен завершен! Спасибо за использование нашего сервиса.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Не удалось отправить PIN клиенту: {e}")
+        await callback.answer()
+        return
+    
+    # Очищаем состояние клиента
+    try:
+        state_key = StorageKey(bot_id=bot.id, chat_id=client_id, user_id=client_id)
+        client_state = FSMContext(storage=state.storage, key=state_key)
+        await client_state.clear()
+    except:
+        pass
+    
+    # Уведомляем админа
+    await callback.message.edit_text(
+        f"✅ Код {pin} выдан клиенту для получения {vnd_amount:,} VND.",
+        reply_markup=get_main_keyboard()
+    )
     await callback.answer()
