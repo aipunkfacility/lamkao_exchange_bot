@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -15,7 +17,7 @@ from keyboards.keyboards import (
     get_exchange_keyboard
 )
 from states.states import ChatStates, ServiceStates, ExchangeStates
-from utils.validators import clean_float
+from utils.validators import clean_decimal, decimal_to_int_safe
 from database.models import User, Transaction, TransactionStatus
 
 router = Router()
@@ -193,9 +195,9 @@ async def choose_currency(callback: CallbackQuery, state: FSMContext):
 @router.message(ExchangeStates.entering_amount, F.text)
 async def enter_amount(message: Message, state: FSMContext, session: AsyncSession):
     """Клиент ввел сумму с валидацией."""
-    amount = clean_float(message.text)
+    amount_dec = clean_decimal(message.text)
     
-    if amount is None or amount <= 0:
+    if amount_dec is None or amount_dec <= Decimal('0'):
         await message.answer(
             "Пожалуйста, введите корректную сумму (число больше 0).\n"
             "Нажмите /cancel для отмены."
@@ -205,7 +207,12 @@ async def enter_amount(message: Message, state: FSMContext, session: AsyncSessio
     data = await state.get_data()
     currency = data.get("currency", "")
     rate = RATES.get(currency, 0)
-    vnd_amount = amount * rate
+    
+    # Используем Decimal для точного расчета
+    rate_dec = Decimal(str(rate))
+    vnd_amount_dec = amount_dec * rate_dec
+    vnd_amount = decimal_to_int_safe(vnd_amount_dec)  # Безопасное преобразование в int
+    
     currency_name = CURRENCY_NAMES.get(currency, currency)
     
     user = await session.get(User, message.from_user.id)
@@ -216,11 +223,12 @@ async def enter_amount(message: Message, state: FSMContext, session: AsyncSessio
         )
         session.add(user)
     
+    # Сохраняем в БД (float с округлением до 2 знаков для суммы, целое для VND)
     transaction = Transaction(
         user_id=message.from_user.id,
-        amount=amount,
+        amount=float(round(amount_dec, 2)),
         currency=currency,
-        vnd_amount=vnd_amount,
+        vnd_amount=float(vnd_amount),  # Храним как float, но значение целое
         status=TransactionStatus.PENDING
     )
     session.add(transaction)
@@ -228,16 +236,20 @@ async def enter_amount(message: Message, state: FSMContext, session: AsyncSessio
     
     transaction_id = transaction.id
     
+    # Сохраняем Decimal и int в state
     await state.update_data(
-        amount=amount,
+        amount=amount_dec,
         vnd_amount=vnd_amount,
         transaction_id=transaction_id
     )
     
+    # Форматируем отображение
+    amount_display = f"{amount_dec:,.2f}".replace(",", " ")
+    
     await message.answer(
         f"📊 <b>Проверьте данные:</b>\n\n"
-        f"💵 Вы отдаёте: <b>{amount} {currency_name}</b>\n"
-        f"💴 Получаете: <b>{vnd_amount:,.0f} VND</b>\n\n"
+        f"💵 Вы отдаёте: <b>{amount_display} {currency_name}</b>\n"
+        f"💴 Получаете: <b>{vnd_amount:,} VND</b>\n\n"
         f"Курс: 1 {currency} = {rate:,} VND",
         reply_markup=get_confirm_keyboard(),
         parse_mode="HTML"
@@ -253,8 +265,8 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
     
     data = await state.get_data()
     currency = data.get("currency", "")
-    amount = data.get("amount", 0)
-    vnd_amount = data.get("vnd_amount", 0)
+    amount_dec: Decimal | None = data.get("amount")
+    vnd_amount: int = data.get("vnd_amount", 0)
     transaction_id = data.get("transaction_id")
     currency_name = CURRENCY_NAMES.get(currency, currency)
     
@@ -263,10 +275,13 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
         if transaction:
             transaction.status = TransactionStatus.WAITING_FOR_APPROVE
     
+    # Форматируем сумму для отображения
+    amount_display = f"{amount_dec:,.2f}".replace(",", " ") if amount_dec else "0"
+    
     admin_text = (
         f"🔄 <b>ЗАЯВКА НА ОБМЕН ВАЛЮТЫ</b>\n\n"
         f"👤 Клиент: @{username} (ID: <code>{user_id}</code>)\n"
-        f"💵 Отдаёт: <b>{amount} {currency_name}</b>\n"
+        f"💵 Отдаёт: <b>{amount_display} {currency_name}</b>\n"
         f"💴 Получает: <b>{vnd_amount:,} VND</b>"
     )
     
@@ -274,7 +289,7 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
         ADMIN_ID,
         admin_text,
         parse_mode="HTML",
-        reply_markup=get_exchange_keyboard(user_id, f"{amount} {currency}", currency, vnd_amount)
+        reply_markup=get_exchange_keyboard(user_id, f"{amount_display} {currency}", currency, vnd_amount)
     )
     
     await callback.message.edit_text(
@@ -303,7 +318,8 @@ async def process_exchange_paid(callback: CallbackQuery, bot: Bot):
     # Парсим данные из callback_data: "exchange_paid:1000 RUB:RUB:270000"
     parts = callback.data.split(":")
     amount = parts[1]   # "1000 RUB"
-    vnd_amount = int(parts[3])  # 270000
+    vnd_amount_str = parts[3]
+    vnd_amount = decimal_to_int_safe(Decimal(vnd_amount_str))  # Безопасное преобразование
     
     username = callback.from_user.username or "Без username"
     user_id = callback.from_user.id

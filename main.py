@@ -18,7 +18,7 @@ async def on_startup(bot: Bot):
     commands = [
         BotCommand(command="start", description="🏠 Главное меню"),
         BotCommand(command="rates", description="💱 Актуальный курс валют"),
-        BotCommand(command="cancel", description="❌ Отменить текущее действие"),
+        BotCommand(command="cancel", description="❌ Отмена текущее действие"),
         BotCommand(command="help", description="ℹ️ Информация и контакты"),
     ]
     await bot.set_my_commands(commands)

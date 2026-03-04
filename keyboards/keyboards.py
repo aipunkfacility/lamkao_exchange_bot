@@ -1,6 +1,10 @@
+from decimal import Decimal
+
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters.callback_data import CallbackData
+
+from utils.validators import decimal_to_int_safe
 
 # Фабрика для обработки кнопок сервиса
 class ServiceCallback(CallbackData, prefix="srv"):
@@ -127,6 +131,10 @@ def get_service_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 def get_exchange_keyboard(user_id: int, amount: str, currency: str, vnd_amount: int) -> InlineKeyboardMarkup:
     """Клавиатура для Админа: Обработка заявки на обмен валюты"""
+    # Защитное преобразование vnd_amount в int (на случай если передано не int)
+    if not isinstance(vnd_amount, int):
+        vnd_amount = decimal_to_int_safe(Decimal(str(vnd_amount)))
+    
     builder = InlineKeyboardBuilder()
     
     # style="success" для одобрения (Liquid Glass)

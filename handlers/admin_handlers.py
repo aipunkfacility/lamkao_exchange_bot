@@ -1,4 +1,6 @@
 import random
+from decimal import Decimal
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -14,7 +16,7 @@ from keyboards.keyboards import (
     get_main_keyboard
 )
 from states.states import AdminChat, AdminStates, ChatStates
-from utils.validators import clean_float
+from utils.validators import decimal_to_int_safe
 
 router = Router()
 
@@ -31,12 +33,13 @@ async def start_service_bill(callback: CallbackQuery, callback_data: ServiceCall
 @router.message(AdminStates.waiting_for_service_amount, F.from_user.id == ADMIN_ID)
 async def process_service_bill_amount(message: Message, state: FSMContext, bot: Bot):
     """Админ ввел сумму счета."""
-    amount = clean_float(message.text)
-    if amount is None or amount <= 0:
+    from utils.validators import clean_decimal, decimal_to_int_safe
+    amount_dec = clean_decimal(message.text)
+    if amount_dec is None or amount_dec <= Decimal('0'):
         await message.answer("Пожалуйста, введите корректную сумму (число больше 0).")
         return
 
-    amount_int = int(amount)
+    amount_int = decimal_to_int_safe(amount_dec)
     data = await state.get_data()
     client_id = data.get('bill_client_id')
 
@@ -131,7 +134,9 @@ async def send_admin_reply(message: Message, state: FSMContext, bot: Bot):
         # Для обмена валют - возвращаем клавиатуру обмена
         exchange_amount = data.get('exchange_amount', '')
         exchange_currency = data.get('exchange_currency', '')
-        exchange_vnd_amount = data.get('exchange_vnd_amount', 0)
+        raw_vnd = data.get('exchange_vnd_amount', 0)
+        # Безопасное преобразование в int (на случай если в state float)
+        exchange_vnd_amount = decimal_to_int_safe(Decimal(str(raw_vnd)))
         keyboard = get_exchange_keyboard(client_id, exchange_amount, exchange_currency, exchange_vnd_amount)
     else:
         # Для сервисов - возвращаем клавиатуру сервиса

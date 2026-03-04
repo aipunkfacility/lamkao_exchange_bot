@@ -6,6 +6,8 @@
 
 - **Database Session Middleware**: Implemented `DbSessionMiddleware` for automatic database session management following Dependency Inversion Principle. Handlers now receive `session: AsyncSession` as parameter instead of direct imports.
 
+- **Decimal Precision Engine**: Complete migration to `decimal` module for all financial calculations. Absolute mathematical precision eliminates floating-point errors in currency conversion. All amounts processed through `clean_decimal()` and `decimal_to_int_safe()` with ROUND_HALF_UP rounding.
+
 - **System Menu Commands**: Added Telegram menu commands (/start, /rates, /cancel, /help) for quick access to main features. Commands appear in the blue Menu button and work in any state.
 
 - **Currency Exchange Workflow**: Complete exchange process from currency selection to PIN generation. Users can exchange RUB, USDT, and USD to VND with real-time rate calculation.
@@ -22,6 +24,8 @@
 
 - **UI/UX Enhancements**: Liquid Glass styling for buttons, improved keyboard layouts, and user-friendly error messages throughout the interface.
 
+- **Input Validation**: Enhanced numeric input validation using Decimal arithmetic. All user-provided amounts are sanitized through `clean_decimal()` before processing, preventing invalid inputs and ensuring consistent formatting.
+
 - **Performance**: Optimized database queries and message handling for faster response times.
 
 - **Error Handling**: Comprehensive exception handling with graceful fallbacks when messages fail to send.
@@ -29,6 +33,12 @@
 - **Dependency Management**: Simplified requirements.txt - removed redis, added aiogram-sqlite-storage and SQLAlchemy async dependencies.
 
 ## 🐛 Bug Fixes
+
+- **Amount Validation**: Fixed `isdigit()` to use `clean_float()` - now accepts decimal numbers (150.5, 54,20), spaces (1 000), and commas as separators.
+
+- **Pydantic ValidationError**: Resolved callback data validation failures caused by floating-point precision errors. `vnd_amount` now always receives properly rounded integers through `decimal_to_int_safe()`, ensuring ExchangeCallback validation always succeeds.
+
+- **QR Code Upload**: Added support for both photos and documents (images sent as files). Bot now handles invalid formats gracefully with helpful error messages.
 
 - **FSM Routing Issues**: Fixed critical bug where commands like /cancel wouldn't work during active states (e.g., waiting for photo upload).
 
