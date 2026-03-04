@@ -14,6 +14,7 @@ from keyboards.keyboards import (
     get_main_keyboard
 )
 from states.states import AdminChat, AdminStates, ChatStates
+from utils.validators import clean_float
 
 router = Router()
 
@@ -30,24 +31,25 @@ async def start_service_bill(callback: CallbackQuery, callback_data: ServiceCall
 @router.message(AdminStates.waiting_for_service_amount, F.from_user.id == ADMIN_ID)
 async def process_service_bill_amount(message: Message, state: FSMContext, bot: Bot):
     """Админ ввел сумму счета."""
-    if not message.text.isdigit():
-        await message.answer("Пожалуйста, введите только число.")
+    amount = clean_float(message.text)
+    if amount is None or amount <= 0:
+        await message.answer("Пожалуйста, введите корректную сумму (число больше 0).")
         return
 
-    amount = int(message.text)
+    amount_int = int(amount)
     data = await state.get_data()
     client_id = data.get('bill_client_id')
 
     # Формируем кнопку оплаты для клиента
     builder = InlineKeyboardBuilder()
-    builder.button(text="🧾 Я оплатил", callback_data=f"service_paid:{amount}")
+    builder.button(text="🧾 Я оплатил", callback_data=f"service_paid:{amount_int}")
     
     # Отправляем счет клиенту
     try:
         await bot.send_message(
             client_id,
             f"✅ <b>Заявка подтверждена!</b>\n\n"
-            f"К оплате: <b>{amount} RUB</b>\n"
+            f"К оплате: <b>{amount_int} RUB</b>\n"
             f"Реквизиты: <code>{SBER_CARD}</code>\n\n"
             f"После перевода нажмите кнопку ниже.",
             parse_mode="HTML",
@@ -59,7 +61,7 @@ async def process_service_bill_amount(message: Message, state: FSMContext, bot: 
         return
 
     # Возвращаем админу управление
-    await message.answer(f"✅ Счет на {amount} RUB выставлен клиенту.")
+    await message.answer(f"✅ Счет на {amount_int} RUB выставлен клиенту.")
     
     # Показываем меню действий, чтобы админ мог продолжить общение
     keyboard = get_service_action_keyboard(client_id)
