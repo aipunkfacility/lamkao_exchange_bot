@@ -56,19 +56,43 @@ async def start_qr_payment(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ServiceStates.waiting_for_photo)
+@router.message(ServiceStates.waiting_for_photo, F.photo)
 async def process_photo(message: Message, state: FSMContext):
-    if not message.photo:
-        await message.answer("Пожалуйста, отправьте фото. Нажмите /cancel для отмены.")
-        return
-    
     file_id = message.photo[-1].file_id
-    await state.update_data(photo_file_id=file_id)
+    await state.update_data(photo_file_id=file_id, photo_type="photo")
     
     await message.answer(
         "📝 Теперь введите сумму и описание (например: '1000 RUB, оплата за тур'):"
     )
     await state.set_state(ServiceStates.waiting_for_description)
+
+
+@router.message(ServiceStates.waiting_for_photo, F.document)
+async def process_document(message: Message, state: FSMContext):
+    doc = message.document
+    
+    if doc.mime_type and doc.mime_type.startswith("image/"):
+        file_id = doc.file_id
+        await state.update_data(photo_file_id=file_id, photo_type="document")
+        
+        await message.answer(
+            "📝 Теперь введите сумму и описание (например: '1000 RUB, оплата за тур'):"
+        )
+        await state.set_state(ServiceStates.waiting_for_description)
+    else:
+        await message.answer(
+            "📷 Пожалуйста, отправьте изображение (фото, скриншот).\n"
+            "PDF и другие документы не принимаются.\n"
+            "Нажмите /cancel для отмены."
+        )
+
+
+@router.message(ServiceStates.waiting_for_photo)
+async def process_invalid_photo(message: Message, state: FSMContext):
+    await message.answer(
+        "📷 Пожалуйста, отправьте фото QR-кода или скриншота оплаты.\n"
+        "Нажмите /cancel для отмены."
+    )
 
 
 @router.message(ServiceStates.waiting_for_description)
@@ -78,6 +102,7 @@ async def process_description(message: Message, state: FSMContext, bot):
     
     data = await state.get_data()
     photo_file_id = data.get("photo_file_id")
+    photo_type = data.get("photo_type", "photo")
     description = message.text
     
     await state.update_data(
@@ -85,14 +110,24 @@ async def process_description(message: Message, state: FSMContext, bot):
         username=username
     )
     
-    await bot.send_photo(
-        ADMIN_ID,
-        photo_file_id,
-        caption=f"💳 НОВАЯ ЗАЯВКА НА ОПЛАТУ СЕРВИСА\n"
-                 f"Клиент: @{username} (ID: {user_id})\n"
-                 f"Запрос: {description}",
-        reply_markup=get_service_request_keyboard(user_id)
-    )
+    if photo_type == "document":
+        await bot.send_document(
+            ADMIN_ID,
+            photo_file_id,
+            caption=f"💳 НОВАЯ ЗАЯВКА НА ОПЛАТУ СЕРВИСА\n"
+                    f"Клиент: @{username} (ID: {user_id})\n"
+                    f"Запрос: {description}",
+            reply_markup=get_service_request_keyboard(user_id)
+        )
+    else:
+        await bot.send_photo(
+            ADMIN_ID,
+            photo_file_id,
+            caption=f"💳 НОВАЯ ЗАЯВКА НА ОПЛАТУ СЕРВИСА\n"
+                    f"Клиент: @{username} (ID: {user_id})\n"
+                    f"Запрос: {description}",
+            reply_markup=get_service_request_keyboard(user_id)
+        )
     
     await message.answer(
         "✅ Заявка отправлена менеджерам. Ожидайте подтверждения!",
