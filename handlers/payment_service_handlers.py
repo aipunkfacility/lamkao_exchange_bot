@@ -1,17 +1,54 @@
-from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram import Router, F, Bot
+from aiogram.filters import Command, StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
 from keyboards.keyboards import get_main_keyboard, get_service_request_keyboard
-from states.states import ServiceStates
+from states.states import ServiceStates, ChatStates
 
 router = Router()
 
 
-@router.callback_query(F.data == "qr_payment")
+# --- /cancel ДОЛЖЕН БЫТЬ ПЕРЕД FSM-хэндлерами ---
+@router.message(Command("cancel"), StateFilter('*'))
+async def cmd_cancel_service(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Действие отменено.",
+        reply_markup=get_main_keyboard()
+    )
+
+
+@router.callback_query(F.data == "ask_manager", StateFilter('*'))
+async def process_ask_manager(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    """Клиент нажал 'Связаться с менеджером' - сбрасываем стейт и создаем чат."""
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Без username"
+    
+    await state.clear()
+    await state.set_state(ChatStates.in_chat)
+    await state.update_data(chat_type="service")
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"📩 <b>Клиент хочет связаться с менеджером:</b> @{username}\n\n"
+        f"Вы можете начать диалог или выставить счет.",
+        parse_mode="HTML",
+        reply_markup=get_service_request_keyboard(user_id)
+    )
+    
+    await callback.message.answer(
+        "💬 Вы начали диалог с менеджером.\n"
+        "Напишите ваш вопрос, и мы ответим в ближайшее время.",
+        reply_markup=get_main_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "qr_payment", StateFilter('*'))
 async def start_qr_payment(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.message.answer(
         "📸 Отправьте фото QR-кода или скриншот оплаты:"
     )
@@ -63,13 +100,3 @@ async def process_description(message: Message, state: FSMContext, bot):
     )
     
     await state.clear()
-
-
-@router.message(ServiceStates.waiting_for_photo, Command("cancel"))
-@router.message(ServiceStates.waiting_for_description, Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "Отменено. Выберите операцию:",
-        reply_markup=get_main_keyboard()
-    )

@@ -1,7 +1,7 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import ADMIN_ID, RATES, CURRENCY_NAMES
@@ -9,7 +9,6 @@ from keyboards.keyboards import (
     get_main_keyboard,
     get_service_action_keyboard,
     get_service_confirm_keyboard,
-    get_chat_keyboard,
     get_currency_keyboard,
     get_confirm_keyboard,
     get_exchange_keyboard
@@ -20,13 +19,53 @@ router = Router()
 
 # --- START COMMAND ---
 
-@router.message(Command("start"))
+@router.message(Command("start"), StateFilter('*'))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "👋 Добро пожаловать в LamKao Exchange!\n\n"
         "Выберите операцию:",
         reply_markup=get_main_keyboard()
+    )
+
+
+@router.message(Command("cancel"), StateFilter('*'))
+async def cmd_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Действие отменено.",
+        reply_markup=get_main_keyboard()
+    )
+
+
+@router.message(Command("rates"))
+async def cmd_rates(message: Message):
+    # Безопасное форматирование без конфликта кавычек
+    rub_formatted = format(RATES['RUB'], ',').replace(',', ' ')
+    usdt_formatted = format(RATES['USDT'], ',').replace(',', ' ')
+    usd_formatted = format(RATES['USD'], ',').replace(',', ' ')
+
+    await message.answer(
+        f"📊 <b>Актуальный курс обмена на сегодня:</b>\n\n"
+        f"🇷🇺 1 RUB = {rub_formatted} VND\n"
+        f"🪙 1 USDT = {usdt_formatted} VND\n"
+        f"💵 1 USD (наличные) = {usd_formatted} VND\n\n"
+        f"<i>Курс может незначительно меняться, точный расчет доступен при оформлении заявки.</i>",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        "🌴 <b>LamKao Exchange — ваш надежный финансовый сервис во Вьетнаме (Муйне)</b>\n\n"
+        "🕒 Время работы: 09:00 - 21:00\n"
+        "📍 Выдача наличных: на ресепшене по секретному коду.\n\n"
+        "У нас вы можете:\n"
+        "- Обменять рубли, доллары и крипту на донги.\n"
+        "- Оплатить вьетнамские сервисы (визы, отели, билеты) по QR-коду.\n\n"
+        "Если у вас возникли проблемы, нажмите кнопку «Связаться с менеджером» в главном меню.",
+        parse_mode="HTML"
     )
 
 # --- ОБРАБОТКА ОПЛАТЫ СЕРВИСА (ФИНАЛ СБОРА ЗАЯВКИ) ---
@@ -122,9 +161,10 @@ async def process_service_paid(callback: CallbackQuery, bot: Bot):
 
 # --- ОБМЕН ВАЛЮТЫ ---
 
-@router.callback_query(F.data == "buy_vnd")
+@router.callback_query(F.data == "buy_vnd", StateFilter('*'))
 async def start_exchange(callback: CallbackQuery, state: FSMContext):
     """Клиент нажал 'Обменять валюту'."""
+    await state.clear()
     await callback.message.answer(
         "🔄 Выберите валюту для обмена:",
         reply_markup=get_currency_keyboard()
@@ -209,15 +249,15 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot)
     )
     
     await callback.message.edit_text(
-        f"✅ Заявка отправлена!\n\n"
-        f"Менеджер свяжется с вами в ближайшее время.",
+        "✅ Заявка отправлена!\n\n"
+        "Менеджер свяжется с вами в ближайшее время.",
         reply_markup=get_main_keyboard()
     )
     await state.clear()
     await callback.answer()
 
 
-@router.callback_query(F.data == "back_to_menu")
+@router.callback_query(F.data == "back_to_menu", StateFilter('*'))
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню."""
     await state.clear()
@@ -234,7 +274,6 @@ async def process_exchange_paid(callback: CallbackQuery, bot: Bot):
     # Парсим данные из callback_data: "exchange_paid:1000 RUB:RUB:270000"
     parts = callback.data.split(":")
     amount = parts[1]   # "1000 RUB"
-    currency = parts[2]  # "RUB"
     vnd_amount = int(parts[3])  # 270000
     
     username = callback.from_user.username or "Без username"

@@ -5,12 +5,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import ADMIN_ID, SBER_CARD, RATES
+from config import ADMIN_ID, SBER_CARD
 from keyboards.keyboards import (
     ServiceCallback,
     ExchangeCallback,
     get_service_action_keyboard,
-    get_exchange_keyboard
+    get_exchange_keyboard,
+    get_main_keyboard
 )
 from states.states import AdminChat, AdminStates, ChatStates
 
@@ -143,7 +144,7 @@ async def reject_service(callback: CallbackQuery, callback_data: ServiceCallback
     """Админ отклонил заявку."""
     try:
         await bot.send_message(callback_data.user_id, "❌ Ваша заявка отклонена менеджером.")
-    except:
+    except Exception:
         pass
     await callback.message.edit_text("❌ Заявка отклонена.")
     await callback.answer()
@@ -249,7 +250,7 @@ async def reject_exchange(callback: CallbackQuery, callback_data: ExchangeCallba
     
     try:
         await bot.send_message(client_id, "❌ Менеджер отклонил вашу заявку на обмен.")
-    except:
+    except Exception:
         pass
     
     await callback.message.edit_text("❌ Заявка на обмен валюты отклонена.")
@@ -277,7 +278,6 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
     data = callback.data.split(":")
     client_id = int(data[1])
     vnd_amount = int(data[2])
-    username = callback.from_user.username or "Админ"
     
     # Генерируем 4-значный PIN
     pin = f"#{random.randint(1000, 9999)}"
@@ -301,7 +301,7 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
         state_key = StorageKey(bot_id=bot.id, chat_id=client_id, user_id=client_id)
         client_state = FSMContext(storage=state.storage, key=state_key)
         await client_state.clear()
-    except:
+    except Exception:
         pass
     
     # Уведомляем админа
