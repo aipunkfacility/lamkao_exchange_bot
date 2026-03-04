@@ -3,6 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import ADMIN_ID, RATES, CURRENCY_NAMES
 from keyboards.keyboards import (
@@ -14,6 +15,8 @@ from keyboards.keyboards import (
     get_exchange_keyboard
 )
 from states.states import ChatStates, ServiceStates, ExchangeStates
+from utils.validators import clean_float
+from database.models import User, Transaction, TransactionStatus
 
 router = Router()
 
@@ -187,33 +190,54 @@ async def choose_currency(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(ExchangeStates.entering_amount)
-async def enter_amount(message: Message, state: FSMContext):
-    """Клиент ввел сумму."""
-    if not message.text.isdigit():
-        await message.answer("Пожалуйста, введите число. Нажмите /cancel для отмены.")
-        return
+@router.message(ExchangeStates.entering_amount, F.text)
+async def enter_amount(message: Message, state: FSMContext, session: AsyncSession):
+    """Клиент ввел сумму с валидацией."""
+    amount = clean_float(message.text)
     
-    amount = int(message.text)
-    if amount <= 0:
-        await message.answer("Сумма должна быть больше 0. Попробуйте снова.")
+    if amount is None or amount <= 0:
+        await message.answer(
+            "Пожалуйста, введите корректную сумму (число больше 0).\n"
+            "Нажмите /cancel для отмены."
+        )
         return
     
     data = await state.get_data()
-    currency = data.get("currency")
+    currency = data.get("currency", "")
     rate = RATES.get(currency, 0)
     vnd_amount = amount * rate
     currency_name = CURRENCY_NAMES.get(currency, currency)
     
+    user = await session.get(User, message.from_user.id)
+    if not user:
+        user = User(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username
+        )
+        session.add(user)
+    
+    transaction = Transaction(
+        user_id=message.from_user.id,
+        amount=amount,
+        currency=currency,
+        vnd_amount=vnd_amount,
+        status=TransactionStatus.PENDING
+    )
+    session.add(transaction)
+    await session.flush()
+    
+    transaction_id = transaction.id
+    
     await state.update_data(
         amount=amount,
-        vnd_amount=vnd_amount
+        vnd_amount=vnd_amount,
+        transaction_id=transaction_id
     )
     
     await message.answer(
         f"📊 <b>Проверьте данные:</b>\n\n"
         f"💵 Вы отдаёте: <b>{amount} {currency_name}</b>\n"
-        f"💴 Получаете: <b>{vnd_amount:,} VND</b>\n\n"
+        f"💴 Получаете: <b>{vnd_amount:,.0f} VND</b>\n\n"
         f"Курс: 1 {currency} = {rate:,} VND",
         reply_markup=get_confirm_keyboard(),
         parse_mode="HTML"
@@ -222,16 +246,22 @@ async def enter_amount(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "confirm_exchange")
-async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot):
+async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot, session: AsyncSession):
     """ШАГ 1: Клиент подтвердил обмен."""
     user_id = callback.from_user.id
     username = callback.from_user.username or "Без username"
     
     data = await state.get_data()
-    currency = data.get("currency")
-    amount = data.get("amount")
-    vnd_amount = data.get("vnd_amount")
+    currency = data.get("currency", "")
+    amount = data.get("amount", 0)
+    vnd_amount = data.get("vnd_amount", 0)
+    transaction_id = data.get("transaction_id")
     currency_name = CURRENCY_NAMES.get(currency, currency)
+    
+    if transaction_id:
+        transaction = await session.get(Transaction, transaction_id)
+        if transaction:
+            transaction.status = TransactionStatus.WAITING_FOR_APPROVE
     
     admin_text = (
         f"🔄 <b>ЗАЯВКА НА ОБМЕН ВАЛЮТЫ</b>\n\n"
@@ -240,7 +270,6 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot)
         f"💴 Получает: <b>{vnd_amount:,} VND</b>"
     )
     
-    # ПЕРЕДАЁМ vnd_amount В КЛАВИАТУРУ!
     await bot.send_message(
         ADMIN_ID,
         admin_text,

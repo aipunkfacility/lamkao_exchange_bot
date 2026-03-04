@@ -1,10 +1,12 @@
 import asyncio
 import logging
 from aiogram import Dispatcher, Bot
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram_sqlite_storage.sqlitestore import SQLStorage
 from aiogram.types import BotCommand
 
 from config import BOT_TOKEN
+from database.db import init_db, async_session
+from middlewares.db_middleware import DbSessionMiddleware
 from handlers.user_handlers import router as user_router
 from handlers.admin_handlers import router as admin_router
 from handlers.payment_service_handlers import router as payment_service_router
@@ -24,8 +26,12 @@ async def on_startup(bot: Bot):
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
-    storage = MemoryStorage()
+    storage = SQLStorage("fsm_storage.db")
     dp = Dispatcher(storage=storage)
+    
+    dp.update.middleware(DbSessionMiddleware(session_pool=async_session))
+    
+    await init_db()
     
     dp.include_router(payment_service_router)
     dp.include_router(user_router)
@@ -33,7 +39,11 @@ async def main():
     
     await bot.delete_webhook(drop_pending_updates=True)
     await on_startup(bot)
-    await dp.start_polling(bot)
+    
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await storage.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Основные настройки из .env
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-SBER_CARD = os.getenv("SBER_CARD", "Реквизиты не указаны") # Подтягиваем номер карты
+BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+ADMIN_ID: int = int(os.getenv("ADMIN_ID") or "0")
+SBER_CARD: str = os.getenv("SBER_CARD", "Реквизиты не указаны")
 
 # Курсы валют для демо (можно менять здесь)
 RATES = {
