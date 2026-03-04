@@ -1,8 +1,51 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-.venv/
+*.pyd
+.Python
+env/
 venv/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Токены и секреты
+.env
+.env.local
+.env.*.local
+
+# Базы данных
+*.db
+fsm_storage.db
+lamkao.db
+
+# Кэш
+.ruff_cache/
+__pycache__/
+
+# Логи
 *.log
+logs/
+
+# Токены и ключи
+*.key
+*.pem
+*.crt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI-агенты
+.opencode/
+.claude/
+.agents/
+
+# Документация
 docs/

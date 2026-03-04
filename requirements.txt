@@ -4,3 +4,4 @@ magic-filter==1.0.12
 aiogram-sqlite-storage>=1.0.0
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.19.0
+Pillow

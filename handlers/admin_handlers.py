@@ -2,7 +2,7 @@ import random
 from decimal import Decimal
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -17,6 +17,7 @@ from keyboards.keyboards import (
 )
 from states.states import AdminChat, AdminStates, ChatStates
 from utils.validators import decimal_to_int_safe
+from utils.image_gen import generate_pin_image
 
 router = Router()
 
@@ -291,17 +292,29 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
     
     # Отправляем PIN клиенту
     try:
-        await bot.send_message(
+        # Генерируем изображение с PIN-кодом
+        pin_image = generate_pin_image(pin)
+        
+        # Отправляем фото
+        await bot.send_photo(
             client_id,
-            f"🔑 <b>Ваш секретный код для получения:</b> <b>{pin}</b>\n\n"
-            f"Покажите его на ресепшене для получения <b>{vnd_amount:,} VND</b>.\n\n"
+            photo=pin_image,
+            caption=f"🔑 <b>Ваш секретный код для получения:</b> <b>{pin}</b>\n\n"
+            f"⌨️ Покажите его на ресепшене для получения <b>{vnd_amount:,} VND</b>.\n\n"
             f"✅ Обмен завершен! Спасибо за использование нашего сервиса.",
             parse_mode="HTML"
         )
+        
     except Exception as e:
-        await callback.message.edit_text(f"❌ Не удалось отправить PIN клиенту: {e}")
-        await callback.answer()
-        return
+        # Если отправка фото не удалась - отправляем текст
+        await bot.send_message(
+            client_id,
+            f"🔑 <b>Ваш секретный код для получения:</b> <b>{pin}</b>\n\n"
+            f"⌨️ Покажите его на ресепшене для получения <b>{vnd_amount:,} VND</b>.\n\n"
+            f"✅ Обмен завершен! Спасибо за использование нашего сервиса.",
+            parse_mode="HTML"
+        )
+        await callback.message.edit_text(f"⚠️ Ошибка отправки фото PIN-кода: {e}")
     
     # Очищаем состояние клиента
     try:

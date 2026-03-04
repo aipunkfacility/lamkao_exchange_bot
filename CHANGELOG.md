@@ -16,7 +16,7 @@
 
 - **Anonymous Chat System**: Secure messaging between clients and managers through the bot, with inline keyboard controls for conversation management.
 
-- **PIN Code Generation**: Automatic 4-digit PIN creation for secure cash pickup at the reception.
+- **PIN Code Generation**: Automatic 4-digit PIN creation for secure cash pickup at the reception. Now includes PIN generation as a large image (600x300px) with bright orange background (#FFCC00) for easy viewing on reception screens. Uses modern Pillow API with `textbbox()` instead of deprecated `textsize()`.
 
 ## 🔧 Improvements
 
