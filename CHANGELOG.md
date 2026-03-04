@@ -1,6 +1,10 @@
-# Updates - v1.0.0 (March 2024)
+# Updates - v1.1.0 (March 2026)
 
 ## ✨ New Features
+
+- **SQLite FSM Storage**: Replaced Redis with SQLite for state management - no external dependencies required, data persists in local `fsm_storage.db` file.
+
+- **Database Session Middleware**: Implemented `DbSessionMiddleware` for automatic database session management following Dependency Inversion Principle. Handlers now receive `session: AsyncSession` as parameter instead of direct imports.
 
 - **System Menu Commands**: Added Telegram menu commands (/start, /rates, /cancel, /help) for quick access to main features. Commands appear in the blue Menu button and work in any state.
 
@@ -21,6 +25,8 @@
 - **Performance**: Optimized database queries and message handling for faster response times.
 
 - **Error Handling**: Comprehensive exception handling with graceful fallbacks when messages fail to send.
+
+- **Dependency Management**: Simplified requirements.txt - removed redis, added aiogram-sqlite-storage and SQLAlchemy async dependencies.
 
 ## 🐛 Bug Fixes
 
