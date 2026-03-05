@@ -5,6 +5,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram.exceptions import TelegramAPIError
 
@@ -181,7 +182,8 @@ async def enter_amount(message: Message, state: FSMContext, session: AsyncSessio
     
     currency_name = CURRENCY_NAMES.get(currency, currency)
     
-    user = await session.get(User, message.from_user.id)
+    user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+    user = user.scalar_one_or_none()
     if not user:
         user = User(
             telegram_id=message.from_user.id,
