@@ -1,7 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import declarative_base
 
-Base = declarative_base()
+from database.models import Base
 
 DATABASE_URL = "sqlite+aiosqlite:///lamkao.db"
 

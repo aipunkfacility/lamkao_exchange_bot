@@ -254,6 +254,18 @@ async def approve_exchange(callback: CallbackQuery, callback_data: ExchangeCallb
     transaction.status = TransactionStatus.APPROVED
     await session.commit()
     # -------------------------------------------
+
+    # --- УДАЛЯЕМ КНОПКУ "ОТМЕНИТЬ" У КЛИЕНТА ---
+    if transaction.cancel_message_id:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=client_id,
+                message_id=transaction.cancel_message_id,
+                reply_markup=None # Удаляем кнопки
+            )
+        except Exception:
+            pass # Если сообщение уже удалено, игнорируем
+    # -------------------------------------------
     
     # Отправляем реквизиты клиенту
     builder = InlineKeyboardBuilder()

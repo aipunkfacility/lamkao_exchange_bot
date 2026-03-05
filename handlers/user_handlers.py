@@ -257,17 +257,26 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
     except TelegramAPIError:
         pass
 
-    # СОЗДАЕМ КНОПКУ ОТМЕНЫ
+    # СОЗДАЕМ КНОПКУ ОТМЕНЫ С ID ТРАНЗАКЦИИ
     cancel_kb = InlineKeyboardBuilder()
-    cancel_kb.button(text="❌ Отменить заявку", callback_data="cancel_active_request")
+    cancel_kb.button(text="❌ Отменить заявку", callback_data=f"cancel_active_request:{transaction_id}")
     
     try:
-        await callback.message.edit_text(
+        # 1. Отправляем сообщение и СОХРАНЯЕМ результат в переменную sent_msg
+        sent_msg = await callback.message.edit_text(
             "✅ <b>Заявка отправлена!</b>\n\n"
             "Менеджер получил ваш запрос. Пожалуйста, ожидайте подтверждения и реквизитов.",
-            reply_markup=cancel_kb.as_markup(), # <-- Вот она
+            reply_markup=cancel_kb.as_markup(),
             parse_mode="HTML"
         )
+        
+        # 2. Сохраняем ID сообщения в базу данных
+        if transaction_id:
+            # Нам нужно заново получить транзакцию, так как сессия могла закрыться (или используем текущую)
+            # Но проще сделать update, если объект транзакции еще привязан
+            transaction.cancel_message_id = sent_msg.message_id
+            await session.commit()
+            
     except TelegramAPIError:
         pass
         
