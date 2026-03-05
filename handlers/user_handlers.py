@@ -21,7 +21,24 @@ from database.models import User, Transaction, TransactionStatus
 
 router = Router()
 
-# --- START КОМАНДЫ ---
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ОТМЕНЫ (DRY) ---
+async def execute_cancel(state: FSMContext, session: AsyncSession = None):
+    """Логика отмены: обновляет БД и чистит стейт."""
+    try:
+        if session:
+            data = await state.get_data()
+            transaction_id = data.get("transaction_id")
+            if transaction_id:
+                transaction = await session.get(Transaction, transaction_id)
+                # Отменяем только если статус PENDING или WAITING_FOR_APPROVE
+                if transaction and transaction.status in [TransactionStatus.PENDING, TransactionStatus.WAITING_FOR_APPROVE]:
+                    transaction.status = TransactionStatus.CANCELED
+                    await session.commit()
+    except Exception:
+        pass
+    await state.clear()
+
+# --- START И КОМАНДЫ ---
 
 @router.message(Command("start"), StateFilter('*'))
 async def cmd_start(message: Message, state: FSMContext):
@@ -32,30 +49,66 @@ async def cmd_start(message: Message, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
-
 @router.message(Command("cancel"), StateFilter('*'))
 async def cmd_cancel(message: Message, state: FSMContext, session: AsyncSession = None):
-    """Отмена текущего действия и пометка транзакции как отмененной в БД."""
+    """Команда /cancel"""
+    await execute_cancel(state, session)
+    await message.answer("Действие отменено.", reply_markup=get_main_keyboard())
+
+# --- НОВЫЙ ХЭНДЛЕР: КНОПКА ОТМЕНЫ ---
+@router.callback_query(F.data == "cancel_active_request", StateFilter('*'))
+async def btn_cancel_request(callback: CallbackQuery, state: FSMContext, bot: Bot, session: AsyncSession = None):
+    """Обработка кнопки '❌ Отменить заявку' с проверкой статуса."""
+    
+    # 1. Сначала проверяем статус в БД
+    if session:
+        data = await state.get_data()
+        transaction_id = data.get("transaction_id")
+        
+        if transaction_id:
+            transaction = await session.get(Transaction, transaction_id)
+            
+            # Если заявки нет или она уже в продвинутом статусе - ЗАПРЕЩАЕМ ОТМЕНУ
+            if not transaction or transaction.status in [TransactionStatus.APPROVED, TransactionStatus.PAID, TransactionStatus.COMPLETED]:
+                await callback.answer(
+                    "⛔️ Нельзя отменить заявку!\nОна уже обработана или завершена.", 
+                    show_alert=True
+                )
+                # Удаляем кнопку, чтобы не мозолила глаза
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                except:
+                    pass
+                return  # <--- ПРЕРЫВАЕМ ФУНКЦИЮ, НИЧЕГО НЕ ПИШЕМ АДМИНУ
+
+    # 2. Если статус позволяет (PENDING/WAITING) - выполняем отмену
+    await execute_cancel(state, session)
+    
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "Unknown"
+
+    # Уведомляем админа
     try:
-        if session:
-            data = await state.get_data()
-            transaction_id = data.get("transaction_id")
-            if transaction_id:
-                transaction = await session.get(Transaction, transaction_id)
-                if transaction and transaction.status == TransactionStatus.PENDING:
-                    transaction.status = TransactionStatus.CANCELED
-                    await session.commit()
-    except Exception:
+        await bot.send_message(
+            ADMIN_ID,
+            f"❌ <b>Клиент отменил заявку!</b>\n"
+            f"Пользователь: @{username} (ID: {user_id})\n"
+            f"Сделка аннулирована.",
+            parse_mode="HTML"
+        )
+    except TelegramAPIError:
+        pass
+
+    # Удаляем кнопку у клиента
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
         pass
     
-    await state.clear()
-    await message.answer(
-        "Действие отменено.",
-        reply_markup=get_main_keyboard()
-    )
+    await callback.message.answer("❌ Заявка отменена клиентом.", reply_markup=get_main_keyboard())
+    await callback.answer()
 
-
-@router.message(Command("rates"))
+@router.message(Command("rates"), StateFilter('*'))
 async def cmd_rates(message: Message):
     rub_formatted = format(RATES['RUB'], ',').replace(',', ' ')
     usdt_formatted = format(RATES['USDT'], ',').replace(',', ' ')
@@ -70,8 +123,7 @@ async def cmd_rates(message: Message):
         parse_mode="HTML"
     )
 
-
-@router.message(Command("help"))
+@router.message(Command("help"), StateFilter('*'))
 async def cmd_help(message: Message):
     await message.answer(
         "🌴 <b>LamKao Exchange — ваш надежный финансовый сервис во Вьетнаме (Муйне)</b>\n\n"
@@ -95,7 +147,6 @@ async def start_exchange(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-
 @router.callback_query(F.data.startswith("currency:"))
 async def choose_currency(callback: CallbackQuery, state: FSMContext):
     currency = callback.data.split(":")[1]
@@ -108,7 +159,6 @@ async def choose_currency(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(ExchangeStates.entering_amount)
     await callback.answer()
-
 
 @router.message(ExchangeStates.entering_amount, F.text)
 async def enter_amount(message: Message, state: FSMContext, session: AsyncSession):
@@ -169,7 +219,6 @@ async def enter_amount(message: Message, state: FSMContext, session: AsyncSessio
     )
     await state.set_state(ExchangeStates.confirming)
 
-
 @router.callback_query(F.data == "confirm_exchange")
 async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot, session: AsyncSession):
     """ШАГ 1: Клиент подтвердил обмен."""
@@ -206,20 +255,24 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
             reply_markup=get_exchange_keyboard(user_id, f"{amount_display} {currency}", currency, vnd_amount)
         )
     except TelegramAPIError:
-        pass  # В идеале залогировать ошибку
+        pass
+
+    # СОЗДАЕМ КНОПКУ ОТМЕНЫ
+    cancel_kb = InlineKeyboardBuilder()
+    cancel_kb.button(text="❌ Отменить заявку", callback_data="cancel_active_request")
     
     try:
         await callback.message.edit_text(
-            "✅ Заявка отправлена!\n\n"
-            "Менеджер свяжется с вами в ближайшее время.",
-            reply_markup=get_main_keyboard()
+            "✅ <b>Заявка отправлена!</b>\n\n"
+            "Менеджер получил ваш запрос. Пожалуйста, ожидайте подтверждения и реквизитов.",
+            reply_markup=cancel_kb.as_markup(), # <-- Вот она
+            parse_mode="HTML"
         )
     except TelegramAPIError:
         pass
         
     await state.clear()
     await callback.answer()
-
 
 @router.callback_query(F.data == "back_to_menu", StateFilter('*'))
 async def back_to_menu(callback: CallbackQuery, state: FSMContext):
@@ -229,7 +282,6 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("exchange_paid:"))
 async def process_exchange_paid(callback: CallbackQuery, bot: Bot):
@@ -263,10 +315,13 @@ async def process_exchange_paid(callback: CallbackQuery, bot: Bot):
         pass
     
     try:
+        # ЗДЕСЬ УБИРАЕМ КНОПКИ ВООБЩЕ (Ожидание кода)
         await callback.message.edit_text(
             f"✅ Вы сообщили об оплате {amount}.\n"
-            f"Менеджер проверит и пришлет код доступа.",
-            reply_markup=get_main_keyboard()
+            f"Менеджер проверяет поступление. Как только деньги придут, вы получите код для выдачи.\n\n"
+            f"⏳ <i>Это обычно занимает 1-5 минут.</i>",
+            reply_markup=None, 
+            parse_mode="HTML"
         )
     except TelegramAPIError:
         pass

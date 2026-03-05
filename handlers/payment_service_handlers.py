@@ -103,7 +103,7 @@ async def process_invalid_photo(message: Message, state: FSMContext):
         "Нажмите /cancel для отмены."
     )
 
-@router.message(ServiceStates.waiting_for_description)
+@router.message(ServiceStates.waiting_for_description, ~F.text.startswith('/'))
 async def process_description(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     username = message.from_user.username or "Без username"
@@ -137,7 +137,7 @@ async def process_description(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
 
 # --- ЧАТ С МЕНЕДЖЕРОМ И ОПЛАТА СЕРВИСА (Перенесено из user_handlers) ---
-@router.message(ChatStates.in_chat)
+@router.message(ChatStates.in_chat, ~F.text.startswith('/'))
 async def process_chat_message(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     username = message.from_user.username or "NoUsername"

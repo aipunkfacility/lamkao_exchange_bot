@@ -7,6 +7,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from sqlalchemy import select, desc
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.models import Transaction, TransactionStatus # И это тоже
 from config import ADMIN_ID, SBER_CARD
 from keyboards.keyboards import (
     ServiceCallback,
@@ -219,14 +223,39 @@ async def send_service_result_to_client(message: Message, state: FSMContext, bot
 # --- ОБРАБОТКА ЗАЯВКИ НА ОБМЕН ВАЛЮТЫ ---
 
 @router.callback_query(ExchangeCallback.filter(F.action == "approve"))
-async def approve_exchange(callback: CallbackQuery, callback_data: ExchangeCallback, bot: Bot):
+async def approve_exchange(callback: CallbackQuery, callback_data: ExchangeCallback, bot: Bot, session: AsyncSession):
     """ШАГ 2: Админ одобрил заявку на обмен валюты."""
     client_id = callback_data.user_id
-    amount = callback_data.amount      # "1000 RUB"
-    currency = callback_data.currency  # "RUB"
-    vnd_amount = callback_data.vnd_amount  # 270000
+    amount = callback_data.amount
+    currency = callback_data.currency
+    vnd_amount = callback_data.vnd_amount
     
-    # Отправляем реквизиты клиенту с vnd_amount
+    # --- БЛОК ПРОВЕРКИ АКТУАЛЬНОСТИ ЗАЯВКИ ---
+    # Ищем последнюю заявку этого пользователя
+    query = select(Transaction).where(
+        Transaction.user_id == client_id
+    ).order_by(desc(Transaction.id)).limit(1)
+    
+    result = await session.execute(query)
+    transaction = result.scalar_one_or_none()
+
+    # Если заявки нет или она уже отменена/завершена
+    if not transaction or transaction.status == TransactionStatus.CANCELED:
+        await callback.message.edit_text("❌ <b>Ошибка:</b> Клиент уже отменил эту заявку.")
+        await callback.answer("Заявка неактуальна", show_alert=True)
+        return
+
+    # Если заявка уже оплачена или одобрена (защита от двойного клика)
+    if transaction.status not in [TransactionStatus.PENDING, TransactionStatus.WAITING_FOR_APPROVE]:
+        await callback.message.edit_text(f"⚠️ Статус заявки уже изменен: {transaction.status}")
+        return
+
+    # Обновляем статус на ОДОБРЕНО
+    transaction.status = TransactionStatus.APPROVED
+    await session.commit()
+    # -------------------------------------------
+    
+    # Отправляем реквизиты клиенту
     builder = InlineKeyboardBuilder()
     builder.button(text="🧾 Я оплатил", callback_data=f"exchange_paid:{amount}:{currency}:{vnd_amount}", style="success")
     
@@ -243,7 +272,12 @@ async def approve_exchange(callback: CallbackQuery, callback_data: ExchangeCallb
             reply_markup=builder.as_markup()
         )
         
-        await callback.message.edit_text("✅ Заявка одобрено. Реквизиты отправлены клиенту.")
+        # Убираем кнопки у админа, чтобы он не нажал второй раз
+        await callback.message.edit_text(
+            f"✅ Заявка одобрена.\n"
+            f"Клиент: {amount} -> {vnd_amount:,} VND\n"
+            f"Реквизиты отправлены."
+        )
         
     except Exception as e:
         await callback.message.edit_text(f"❌ Не удалось отправить клиенту реквизиты: {e}")
@@ -281,8 +315,8 @@ async def start_exchange_chat(callback: CallbackQuery, callback_data: ExchangeCa
 
 
 @router.callback_query(F.data.startswith("exchange_confirmed:"))
-async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, bot: Bot):
-    """Админ подтвердил поступление денег - генерирует PIN."""
+async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, bot: Bot, session: AsyncSession):
+    """Админ подтвердил поступление денег - генерирует PIN и закрывает сделку в БД."""
     data = callback.data.split(":")
     client_id = int(data[1])
     vnd_amount = int(data[2])
@@ -290,10 +324,25 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
     # Генерируем 4-значный PIN
     pin = f"#{random.randint(1000, 9999)}"
     
+    # --- ОБНОВЛЕНИЕ БАЗЫ ДАННЫХ ---
+    # Ищем актуальную заявку клиента
+    query = select(Transaction).where(
+        Transaction.user_id == client_id
+    ).order_by(desc(Transaction.id)).limit(1)
+    
+    result = await session.execute(query)
+    transaction = result.scalar_one_or_none()
+    
+    if transaction:
+        transaction.status = TransactionStatus.COMPLETED
+        transaction.pin_code = pin  # Сохраняем PIN в историю
+        await session.commit()
+    # ------------------------------
+
     # Отправляем PIN клиенту
     try:
         # Генерируем изображение с PIN-кодом
-        pin_image = generate_pin_image(pin)
+        pin_image = generate_pin_image(pin, vnd_amount)
         
         # Отправляем фото
         await bot.send_photo(
@@ -314,9 +363,10 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
             f"✅ Обмен завершен! Спасибо за использование нашего сервиса.",
             parse_mode="HTML"
         )
-        await callback.message.edit_text(f"⚠️ Ошибка отправки фото PIN-кода: {e}")
+        # Логируем ошибку, но не прерываем, так как в БД уже записали
+        print(f"Ошибка отправки фото PIN: {e}")
     
-    # Очищаем состояние клиента
+    # Очищаем состояние клиента (на всякий случай)
     try:
         state_key = StorageKey(bot_id=bot.id, chat_id=client_id, user_id=client_id)
         client_state = FSMContext(storage=state.storage, key=state_key)
@@ -324,9 +374,11 @@ async def confirm_exchange_payment(callback: CallbackQuery, state: FSMContext, b
     except Exception:
         pass
     
-    # Уведомляем админа
+    # Уведомляем админа и убираем кнопку
     await callback.message.edit_text(
-        f"✅ Код {pin} выдан клиенту для получения {vnd_amount:,} VND.",
-        reply_markup=get_main_keyboard()
+        f"✅ Сделка закрыта.\n"
+        f"Код <b>{pin}</b> выдан клиенту.\n"
+        f"Сумма: {vnd_amount:,} VND.",
+        parse_mode="HTML"
     )
     await callback.answer()
