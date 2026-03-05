@@ -231,6 +231,7 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
     vnd_amount: int = data.get("vnd_amount", 0)
     transaction_id = data.get("transaction_id")
     currency_name = CURRENCY_NAMES.get(currency, currency)
+    transaction = None
     
     if transaction_id:
         transaction = await session.get(Transaction, transaction_id)
@@ -271,10 +272,8 @@ async def confirm_exchange(callback: CallbackQuery, state: FSMContext, bot: Bot,
         )
         
         # 2. Сохраняем ID сообщения в базу данных
-        if transaction_id:
-            # Нам нужно заново получить транзакцию, так как сессия могла закрыться (или используем текущую)
-            # Но проще сделать update, если объект транзакции еще привязан
-            transaction.cancel_message_id = sent_msg.message_id
+        if transaction is not None and transaction_id and sent_msg is not None:
+            transaction.cancel_message_id = sent_msg.message_id  # type: ignore[union-attr]
             await session.commit()
             
     except TelegramAPIError:
