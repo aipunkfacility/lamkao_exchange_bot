@@ -2,7 +2,7 @@ import random
 from decimal import Decimal
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -17,7 +17,6 @@ from keyboards.keyboards import (
     ExchangeCallback,
     get_service_action_keyboard,
     get_exchange_keyboard,
-    get_main_keyboard
 )
 from states.states import AdminChat, AdminStates, ChatStates
 from utils.validators import decimal_to_int_safe

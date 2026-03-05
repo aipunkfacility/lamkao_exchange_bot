@@ -77,9 +77,9 @@ async def btn_cancel_request(callback: CallbackQuery, state: FSMContext, bot: Bo
                 # Удаляем кнопку, чтобы не мозолила глаза
                 try:
                     await callback.message.edit_reply_markup(reply_markup=None)
-                except:
+                except Exception:
                     pass
-                return  # <--- ПРЕРЫВАЕМ ФУНКЦИЮ, НИЧЕГО НЕ ПИШЕМ АДМИНУ
+                return
 
     # 2. Если статус позволяет (PENDING/WAITING) - выполняем отмену
     await execute_cancel(state, session)
@@ -102,7 +102,7 @@ async def btn_cancel_request(callback: CallbackQuery, state: FSMContext, bot: Bo
     # Удаляем кнопку у клиента
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
-    except:
+    except Exception:
         pass
     
     await callback.message.answer("❌ Заявка отменена клиентом.", reply_markup=get_main_keyboard())
